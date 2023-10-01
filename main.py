@@ -10,6 +10,7 @@ import openvino as ov
 import ipywidgets as widgets
 import numpy as np
 import time
+import os
 
 core = ov.Core()
 device = widgets.Dropdown(
@@ -19,8 +20,11 @@ device = widgets.Dropdown(
     disabled=False,
 )
 
+projectdir = os.getcwd()
+print(projectdir)
+
 core.set_property({'CACHE_DIR': '../cache'})
-model = core.read_model("C:/Users/natha/OneDrive/Desktop/ALPRTEST/model/best.xml")
+model = core.read_model(projectdir + "/model/best.xml")
 compiled_model = core.compile_model(model=model, device_name=device.value)
 
 print("Model Compiled")
@@ -29,7 +33,7 @@ print(compiled_model)
 input_key = compiled_model.input(0)
 output_key = compiled_model.output(0)
 
-src = cv2.imread("C:/Users/natha/OneDrive/Desktop/ALPRTEST/testfiles/test.jpg")
+src = cv2.imread(projectdir + "/testfiles/test.jpg")
 test = cv2.resize(src, (640, 640))
 
 input_image = np.expand_dims(np.transpose(test, (2, 0, 1)), 0)
