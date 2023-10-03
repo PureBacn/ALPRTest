@@ -6,38 +6,36 @@ from ultralytics import YOLO
 projectdir = os.getcwd()
 print(projectdir)
 
-src = cv2.imread(projectdir + "/testfiles/test2.jpeg")
-src = cv2.resize(src, (640, 640))
 model = YOLO(projectdir + "/testfiles/best.pt")
-#model.export(format="openvino", half = True, optimize = True, simplify = True)
-print("Exported")
+#model.export(format="openvino", half = True)
+print("Yolo Loaded")
 ov_model = YOLO(projectdir + "/testfiles/best_openvino_model")
-print("Model Loaded")
-#model = torch.load('testfiles/best.pt')
-print(ov_model)
+print("OV Loaded")
 
+video = cv2.VideoCapture(0)
 
-start_time = time.time()
-results = model(src)
-stop_time = time.time()
+while True:
+    ret, frame = video.read()
+    if not ret:
+        break
 
-print("Inference Time YOLo: ", stop_time - start_time)
+    frame = cv2.resize(frame, (640, 640))
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame = cv2.merge((frame, frame, frame))
 
-start_time = time.time()
-results = ov_model(src)
-stop_time = time.time()
+    results = ov_model(frame)
 
-print("Inference Time OV: ", stop_time - start_time)
+    boxes = results[0].boxes.xyxy
 
+    for box in boxes:
+        x1, y1, x2, y2 = box
 
-boxes = results[0].boxes.xyxy
+        cv2.rectangle(frame,(int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 2)
 
-for box in boxes:
-    print(box)
-    x1, y1, x2, y2 = box
+    cv2.imshow("Object Detection", frame)
 
-    cv2.rectangle(src,(int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 2)
+    if cv2.waitKey(1) == ord('q'):
+        break
 
-cv2.imshow("Object Detection", src)
-cv2.waitKey(0)
+video.release()
 cv2.destroyAllWindows()
