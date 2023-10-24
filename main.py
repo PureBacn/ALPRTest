@@ -1,19 +1,26 @@
-import cv2  # sudo apt install python3-opencv
-import pytesseract  # pip install pytesseract
-import time  # comes with python
-import sqlite3  # comes with python
-from ultralytics import YOLO  # pip install ultralytics
+# Dependencies
+import cv2
+import pytesseract
+import time
+import sqlite3
+from ultralytics import YOLO
 
+start = time.time()
+print("Loading Model...")
 model = YOLO("license_plate_openvino_model", task="detect")  # initialize model
+print("Finished Loading Model ", round((time.time() - start) * 100000) / 100, " ms")
 
+start = time.time()
+print("Connecting To Database...")
 conn = sqlite3.connect("database")  # connect to local database
+print("Connected ", round((time.time() - start) * 100000) / 100, " ms")
 
 cur = conn.cursor()  # get database cursor
 cur.execute(
     "create table if not exists log (plate text, timestamp int, timetype int)"
 )  # create table for the database
 
-video = cv2.VideoCapture(1)  # get camera (-1 default)
+video = cv2.VideoCapture(0)  # get camera (-1 default)
 lastlogged = ""  # last logged license plate
 
 
@@ -26,6 +33,8 @@ def logdata(plate, timestamp):  # new function for logging data
     for val in cur.fetchall():  # loop through stuff
         print(val)  # print it
 
+
+print("Starting Program")
 
 while True:  # main loop
     ret, src = video.read()  # get image from camera
@@ -66,14 +75,20 @@ while True:  # main loop
         for char in text:  # for character within the result text
             if char.isalnum():  # if character isnt special
                 result = result + char  # add it to the result text
-        print("Result: ", result) # print resulting license plate
-        if result != "": # make sure there is a license plate
+        print("Result: ", result)  # print resulting license plate
+        if result != "":  # make sure there is a license plate
             print(lastlogged)
             if lastlogged != result:  # if plate is fresh
                 logdata(result, int(time.time()))  # log the data
             lastlogged = result  # set the last logged plate
             frame = cv2.putText(
-                frame, result, (5, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
+                frame,
+                result,
+                (5, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
             )  # display text on the image
         else:
             lastlogged = ""  # reset last logged plate
