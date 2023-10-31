@@ -3,15 +3,15 @@ import cv2
 import time
 import sqlite3
 import pytesseract
-import tflite_runtime.interpreter as tflite
-
+from pycoral.utils import edgetpu
+from pycoral.adapters import common
+from pycoral.adapters import detect
+ 
 start = time.time()
 print("Loading Interpreter...")
-interpreter = tflite.Interpreter("licensemodel/detect_edgetpu.tflite")#, experimental_delegates=[tflite.load_delegate('libedgetpu.so.1')]) # load interpreter
+interpreter = edgetpu.make_interpreter("licensemodel/detect.tflite") # load interpreter
 interpreter.allocate_tensors() # allocate memory for the tensors
-input_details = interpreter.get_input_details() # get details of input for model
-output_details = interpreter.get_output_details() # get details of output of model
-shape = (input_details[0]["shape"][2], input_details[0]["shape"][1]) # get the input shape
+shape = common.input_size(interpreter) # get the input shape
 print("Finished Loading Interpreter ", round((time.time() - start) * 100000) / 100, " ms")
  
 start = time.time()
@@ -29,7 +29,10 @@ input_std = 127.5 # input standard deviation
 min_conf = 0.5 # minimum confidence
 lastlogged = ""  # last logged license plate
  
-input = cv2.VideoCapture("demo.mp4") # set camera input
+start = time.time()
+print("Connecting To Camera...")
+input = cv2.VideoCapture("demo.mp4") # set input
+print("Connected ", round((time.time() - start) * 100000) / 100, " ms")
  
 def logdata(plate, timestamp):  # new function for logging data
     cur.execute(
@@ -42,43 +45,35 @@ def logdata(plate, timestamp):  # new function for logging data
  
 print("Starting Program")
  
-while(True):
-    start = time.time()
-    ret, frame = input.read()
+while(input.isOpened()):
+    #start = time.time()
+    ret, frame = input.read() # get input frame
+    if not ret:
+        break
     #frame = cv2.imread("test.jpg")
- 
+    
+    frame = cv2.resize(frame, shape) # resize image to input shape
     src = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # format image
     imH, imW, _ = frame.shape # get image bounds
-    src = cv2.resize(src, shape) # resize image to input shape
     src = np.expand_dims(src, 0) # add batch axis
     src = (np.float32(src) - input_mean) / input_std # normalize pixels
         
-    interpreter.set_tensor(input_details[0]["index"], src) # set input tensor
-    interpreter.invoke() # run detection
+    start = time.time()
+    print("Starting Inference...")
+    common.set_input(interpreter, src) # set input tensor
+    interpreter.invoke() # run the inference
+    objects = detect.get_objects(interpreter, min_conf) # get objects from inference
+    print("Inference Took ", round((time.time() - start) * 100000) / 100, " ms")
     
-    boxes = interpreter.get_tensor(output_details[1]["index"])[0] # Bounding box coordinates of detected objects
-    scores = interpreter.get_tensor(output_details[0]["index"])[0] # Confidence of detected objects
-    
-    highest = 0 # set base high score
-    box = [] # set base box
+    highest = None
  
-    for i in range(len(scores)):
-        if ((scores[i] > min_conf) and (scores[i] <= 1.0)) and scores[i] > highest: # check if score is above confidence threshold and below 1, as well as if it is the highest score from detected
-            highest = scores[i] # set highest score
- 
-            # define box bounds
-            ymin = int(max(1,(boxes[i][0] * imH)))
-            xmin = int(max(1,(boxes[i][1] * imW)))
-            ymax = int(min(imH,(boxes[i][2] * imH)))
-            xmax = int(min(imW,(boxes[i][3] * imW)))
- 
-            box = [ymin, xmin, ymax, xmax] # set box to current box
-            frame = cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0,255,0), 2) # draw box around detected
- 
-    """if highest > 0: # check if any license plate has been found
- 
-        frame = frame[box[0] : box[2], box[1] : box[3]] # crop
-        
+    for object in objects:
+        if (object.score <= 1.0) and (highest == None or object.score > highest.score): # check if score is above confidence threshold and below 1, as well as if it is the highest score from detected
+            highest = object # set highest score
+
+    if highest != None: # check if any license plate has been found
+        bbox = highest.bbox # get bounding box
+        frame = cv2.rectangle(frame, (bbox.xmin,bbox.ymin), (bbox.xmax,bbox.ymax), (0,255,0), 2) # draw box around detected
         frame = cv2.resize(frame, (frame.shape[0]*2,frame.shape[1]*2)) # scale image by a factor of 2
  
         text = pytesseract.image_to_string(frame)  # extract text
@@ -104,8 +99,9 @@ while(True):
         else:
             lastlogged = ""  # reset last logged plate
     else:
-        lastlogged = ""  # reset last logged plate"""
-    frame = cv2.putText(frame, str(round(1/(time.time()-start))), (5,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        lastlogged = ""  # reset last logged plate
+    
+    #frame = cv2.putText(frame, str(round(1/(time.time()-start))), (5,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
     cv2.imshow("Camera", frame) # show image
     if cv2.waitKey(1) == ord("q"):  # if q key pressed
         break  # break from main loop

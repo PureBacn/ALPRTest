@@ -1,5 +1,4 @@
 numpy==1.26.1
 opencv_python==4.8.1.78
+pycoral==0.2.0
 pytesseract==0.3.10
-tensorflow==2.14.0
-tensorflow_intel==2.14.0
