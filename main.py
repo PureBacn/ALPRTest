@@ -1,14 +1,18 @@
-# Dependencies
+import numpy as np
 import cv2
-import pytesseract
 import time
 import sqlite3
-from ultralytics import YOLO
+import pytesseract
+from tensorflow.lite.python.interpreter import Interpreter
 
 start = time.time()
-print("Loading Model...")
-model = YOLO("license_plate_openvino_model", task="detect")  # initialize model
-print("Finished Loading Model ", round((time.time() - start) * 100000) / 100, " ms")
+print("Loading Interpreter...")
+interpreter = Interpreter("licensemodel/detect.tflite") # load interpreter
+interpreter.allocate_tensors() # allocate memory for the tensors
+input_details = interpreter.get_input_details() # get details of input for model
+output_details = interpreter.get_output_details() # get details of output of model
+shape = (input_details[0]["shape"][2], input_details[0]["shape"][1]) # get the input shape
+print("Finished Loading Interpreter ", round((time.time() - start) * 100000) / 100, " ms")
 
 start = time.time()
 print("Connecting To Database...")
@@ -20,9 +24,12 @@ cur.execute(
     "create table if not exists log (plate text, timestamp int, timetype int)"
 )  # create table for the database
 
-video = cv2.VideoCapture(0)  # get camera (-1 default)
+input_mean = 127.5 # input mean
+input_std = 127.5 # input standard deviation
+min_conf = 0.5 # minimum confidence
 lastlogged = ""  # last logged license plate
 
+input = cv2.VideoCapture("demo.mp4") # set camera input
 
 def logdata(plate, timestamp):  # new function for logging data
     cur.execute(
@@ -33,41 +40,44 @@ def logdata(plate, timestamp):  # new function for logging data
     for val in cur.fetchall():  # loop through stuff
         print(val)  # print it
 
-
 print("Starting Program")
 
-while True:  # main loop
-    ret, src = video.read()  # get image from camera
-    if not ret:  # if image read improperly
-        break  # break out of main loop
+while(True):
+    ret, frame = input.read()
+    #frame = cv2.imread("test.jpg")
 
-    x, y, _ = src.shape  # get dimensions of input image
-    ratio = x / y  # set the ratio of dimensions of input image
-    frame = cv2.resize(
-        src, (640, 640)
-    )  # resize the input image and store to new variable
-    frame = cv2.cvtColor(
-        frame, cv2.COLOR_BGR2GRAY
-    )  # convert input image to grayscale to be faster
-    frame = cv2.merge(
-        (frame, frame, frame)
-    )  # make image into 3 channels because model made for 3 channels
+    src = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # format image
+    imH, imW, _ = frame.shape # get image bounds
+    src = cv2.resize(src, shape) # resize image to input shape
+    src = np.expand_dims(src, 0) # add batch axis
+    src = (np.float32(src) - input_mean) / input_std # normalize pixels
+        
+    interpreter.set_tensor(input_details[0]["index"], src) # set input tensor
+    interpreter.invoke() # run detection
+    
+    boxes = interpreter.get_tensor(output_details[1]["index"])[0] # Bounding box coordinates of detected objects
+    scores = interpreter.get_tensor(output_details[0]["index"])[0] # Confidence of detected objects
+    
+    highest = 0 # set base high score
+    box = [] # set base box
 
-    results = model(frame)  # get the result data of detected license plate
+    for i in range(len(scores)):
+        if ((scores[i] > min_conf) and (scores[i] <= 1.0)) and scores[i] > highest: # check if score is above confidence threshold and below 1, as well as if it is the highest score from detected
+            highest = scores[i] # set highest score
 
-    boxes = results[0].boxes.xyxy  # get boxes from the results
-    if len(boxes) > 0:  # if there are any license plates
-        box = boxes[0]  # get the first license plate found
-        x1, y1, x2, y2 = box  # get the bounding box of license plate
+            # define box bounds
+            ymin = int(max(1,(boxes[i][0] * imH)))
+            xmin = int(max(1,(boxes[i][1] * imW)))
+            ymax = int(min(imH,(boxes[i][2] * imH)))
+            xmax = int(min(imW,(boxes[i][3] * imW)))
 
-        cv2.rectangle(
-            frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2
-        )  # draw the bounding box of the license plate
-        src = cv2.resize(src, (640, 640))  # resize source to square
-        frame = src[int(y1) : int(y2), int(x1) : int(x2)]  # crop image
-        frame = cv2.resize(
-            frame, (int(100 / ratio), int(100 * ratio))
-        )  # set output image to the same aspect ratio as original source
+            box = [ymin, xmin, ymax, xmax] # set box to current box
+            #frame = cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0,255,0), 2) # draw box around detected
+
+    if highest > 0: # check if any license plate has been found
+
+        frame = frame[box[0] : box[2], box[1] : box[3]] # crop
+        frame = cv2.resize(frame, fx=2, fy=2) # scale image by a factor of 2
 
         text = pytesseract.image_to_string(frame)  # extract text
         text = text.upper()  # convert license plate to caps
@@ -75,9 +85,8 @@ while True:  # main loop
         for char in text:  # for character within the result text
             if char.isalnum():  # if character isnt special
                 result = result + char  # add it to the result text
-        print("Result: ", result)  # print resulting license plate
-        if result != "":  # make sure there is a license plate
-            print(lastlogged)
+
+        if result != "":
             if lastlogged != result:  # if plate is fresh
                 logdata(result, int(time.time()))  # log the data
             lastlogged = result  # set the last logged plate
@@ -95,11 +104,11 @@ while True:  # main loop
     else:
         lastlogged = ""  # reset last logged plate
 
-    cv2.imshow("Object Detection", frame)  # display the image
-
+    cv2.imshow("Camera", frame) # show image
     if cv2.waitKey(1) == ord("q"):  # if q key pressed
         break  # break from main loop
 
 conn.commit()  # commit database changes
-video.release()  # release camera
+input.release()  # release camera
 cv2.destroyAllWindows()  # kill all open image windows
+    
